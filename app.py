@@ -4,169 +4,203 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 # =========================
-# TITLE
+# FUNCTIONS
 # =========================
-st.title("🏒 NHL Dashboard")
 
-# =========================
-# MODE
-# =========================
-mode = st.radio("Select Mode", ["Schedule", "Game Feed"])
-
-# =========================
-# HELPERS
-# =========================
 def convert_to_et(raw_time):
     if raw_time:
-        try:
-            dt = datetime.fromisoformat(raw_time.replace("Z", "+00:00"))
-            return dt.astimezone(ZoneInfo("America/New_York"))
-        except:
-            return None
+        dt = datetime.fromisoformat(raw_time.replace("Z", "+00:00"))
+        return dt.astimezone(ZoneInfo("America/New_York")).strftime("%Y-%m-%d %H:%M:%S %Z")
     return None
 
 
-# =========================================================
-# MODE 1 — SCHEDULE
-# =========================================================
-if mode == "Schedule":
+def parse_actual_time(raw_time):
+    if not raw_time:
+        return None
+    return datetime.fromisoformat(raw_time.replace("Z", "+00:00")).astimezone(
+        ZoneInfo("America/New_York")
+    )
 
-    date = st.text_input("Enter date (YYYY-MM-DD)", "2026-04-20")
 
-    if st.button("Load Games"):
+def clock_to_seconds(clock):
+    if not clock:
+        return None
+    try:
+        m, s = clock.split(":")
+        return int(m) * 60 + int(s)
+    except:
+        return None
 
-        target_date_et = datetime.fromisoformat(date).date()
 
-        url = f"https://api-web.nhle.com/v1/schedule/{date}"
-        data = requests.get(url).json()
+def normalize_period(period):
+    if period is None:
+        return None
+    if period >= 4:
+        return f"OT {period - 3}"
+    return period
 
-        games = []
 
-        for week in data.get("gameWeek", []):
-            for g in week.get("games", []):
+def group_period_for_filter(period):
+    if isinstance(period, str) and period.startswith("OT"):
+        return "OT"
+    return period
 
-                start = g.get("startTimeUTC")
-                if not start:
+
+# =========================
+# UI
+# =========================
+
+st.title("🏒 NHL Dashboard")
+
+game_id = st.text_input("Enter Game ID (gamePk)", "2023020001")
+
+# -------------------------
+# Period Filter
+# -------------------------
+USE_PERIOD_FILTER = st.checkbox("Filter by Period", value=False)
+
+TARGET_PERIODS = []
+
+if USE_PERIOD_FILTER:
+    TARGET_PERIODS = st.multiselect(
+        "Select Periods",
+        [1, 2, 3, "OT"],
+        default=[2]
+    )
+
+# -------------------------
+# Game Clock Filter
+# -------------------------
+USE_CLOCK_FILTER = st.checkbox("Filter by Game Clock", value=False)
+
+MIN_CLOCK = None
+MAX_CLOCK = None
+
+if USE_CLOCK_FILTER:
+    MIN_CLOCK = st.text_input("Min Clock (MM:SS)", "10:00")
+    MAX_CLOCK = st.text_input("Max Clock (MM:SS)", "00:00")
+
+# -------------------------
+# Actual Time Filter
+# -------------------------
+USE_TIME_FILTER = st.checkbox("Filter by Actual Time (ET)", value=False)
+
+et_now = datetime.now(ZoneInfo("America/New_York"))
+
+today_start = et_now.replace(hour=0, minute=0, second=0, microsecond=0)
+today_end = et_now.replace(hour=23, minute=59, second=0, microsecond=0)
+
+if "start_time" not in st.session_state:
+    st.session_state.start_time = today_start.strftime("%Y-%m-%d %H:%M")
+
+if "end_time" not in st.session_state:
+    st.session_state.end_time = today_end.strftime("%Y-%m-%d %H:%M")
+
+START_TIME = None
+END_TIME = None
+
+if USE_TIME_FILTER:
+    START_TIME = st.text_input(
+        "Start Time (YYYY-MM-DD HH:MM)",
+        value=st.session_state.start_time,
+        key="start_time"
+    )
+
+    END_TIME = st.text_input(
+        "End Time (YYYY-MM-DD HH:MM)",
+        value=st.session_state.end_time,
+        key="end_time"
+    )
+
+run = st.button("Load Game Feed")
+
+
+# =========================
+# MAIN LOGIC
+# =========================
+
+if run:
+    url = f"https://statsapi.web.nhl.com/api/v1/game/{game_id}/feed/live"
+
+    try:
+        data = requests.get(url, timeout=10).json()
+        plays = data.get("liveData", {}).get("plays", {}).get("allPlays", [])
+
+        START_SEC = None
+        END_SEC = None
+
+        if USE_CLOCK_FILTER and MIN_CLOCK and MAX_CLOCK:
+            START_SEC = clock_to_seconds(MAX_CLOCK)
+            END_SEC = clock_to_seconds(MIN_CLOCK)
+
+        START_DT = None
+        END_DT = None
+
+        if USE_TIME_FILTER and START_TIME and END_TIME:
+            START_DT = datetime.fromisoformat(START_TIME).replace(
+                tzinfo=ZoneInfo("America/New_York")
+            )
+            END_DT = datetime.fromisoformat(END_TIME).replace(
+                tzinfo=ZoneInfo("America/New_York")
+            )
+
+        events = []
+
+        for play in plays:
+            about = play.get("about", {})
+            result = play.get("result", {})
+
+            raw_period = about.get("period")
+            period_display = normalize_period(raw_period)
+            period_group = group_period_for_filter(period_display)
+
+            clock = about.get("periodTime")
+            actual_dt = parse_actual_time(about.get("dateTime"))
+
+            # Period filter
+            if USE_PERIOD_FILTER and period_group not in TARGET_PERIODS:
+                continue
+
+            # Clock filter
+            if USE_CLOCK_FILTER:
+                sec = clock_to_seconds(clock)
+                if sec is not None and START_SEC is not None and END_SEC is not None:
+                    if not (START_SEC <= sec <= END_SEC):
+                        continue
+
+            # Time filter
+            if USE_TIME_FILTER and actual_dt and START_DT and END_DT:
+                if not (START_DT <= actual_dt <= END_DT):
                     continue
 
-                dt_et = convert_to_et(start)
-
-                if not dt_et or dt_et.date() != target_date_et:
-                    continue
-
-                games.append({
-                    "gamePk": g.get("id"),
-                    "matchup": f"{g['awayTeam']['abbrev']} @ {g['homeTeam']['abbrev']}",
-                    "time": dt_et.strftime("%H:%M")
-                })
-
-        if games:
-            for game in games:
-                st.write(
-                    f"{game['gamePk']} | 🏒 {game['matchup']} | 🕒 {game['time']} (ET)"
-                )
-
-
-# =========================================================
-# MODE 2 — GAME FEED (RAW API ONLY)
-# =========================================================
-if mode == "Game Feed":
-
-    game_id = st.text_input("Enter Game ID", "2025030181")
-
-    if st.button("Load Game Feed"):
-
-        url = f"https://api-web.nhle.com/v1/gamecenter/{game_id}/play-by-play"
-
-        headers = {
-            "User-Agent": "Mozilla/5.0",
-            "Accept": "application/json"
-        }
-
-        try:
-            data = requests.get(url, headers=headers, timeout=10).json()
-        except:
-            st.stop()
-
-        plays = data.get("plays", [])
-
-        # =========================
-        # SORT CORRECTLY (NO FAKE TIME)
-        # =========================
-        def sort_key(play):
-            period = play.get("periodDescriptor", {}).get("number", 0)
-
-            clock = play.get("timeInPeriod", "20:00")
-            try:
-                mm, ss = map(int, clock.split(":"))
-                remaining = mm * 60 + ss
-            except:
-                remaining = 1200
-
-            # earlier plays = higher remaining time
-            return (period, -remaining)
-
-        plays = sorted(plays, key=sort_key)
-
-        # =========================
-        # TEAM INFO
-        # =========================
-        home = data.get("homeTeam", {}).get("abbrev", "HOME")
-        away = data.get("awayTeam", {}).get("abbrev", "AWAY")
-
-        home_id = data.get("homeTeam", {}).get("id")
-        away_id = data.get("awayTeam", {}).get("id")
-
-        home_score = 0
-        away_score = 0
+            events.append({
+                "Period": period_display,
+                "Clock": clock,
+                "Score": f"{about.get('goals', {}).get('away')} - {about.get('goals', {}).get('home')}",
+                "Description": result.get("description"),
+                "Event": result.get("eventTypeId"),
+                "ET Time": actual_dt.strftime("%Y-%m-%d %H:%M:%S %Z") if actual_dt else None
+            })
 
         # =========================
         # OUTPUT
         # =========================
-        for play in plays:
 
-            period = play.get("periodDescriptor", {}).get("number")
-            clock = play.get("timeInPeriod")
+        for e in events:
 
-            if not period or not clock:
-                continue
+            label = f"🔥 {e['Period']}" if str(e["Period"]).startswith("OT") else f"🏒 P{e['Period']}"
 
-            details = play.get("details", {})
-            event = (play.get("typeDescKey") or "").lower()
+            st.write(f"**{label} | ⏱️ {e['Clock']}**")
+            st.write(f"📊 Score: {e['Score']}")
+            st.write(f"📌 {e['Description']}")
 
-            team_id = details.get("eventOwnerTeamId")
-            team = home if team_id == home_id else away
+            if e["Event"]:
+                st.write(f"🎯 Event: {e['Event']}")
 
-            # ✅ USE RAW TIMESTAMP ONLY
-            raw_time = play.get("timeInPeriodUTC") or play.get("timeUTC")
-            dt_et = convert_to_et(raw_time)
-            time_str = dt_et.strftime("%Y-%m-%d %H:%M:%S %Z") if dt_et else "N/A"
+            st.success(f"🕒 Timestamp: {e['ET Time']}")
+            st.markdown("---")
 
-            description = event.upper()
+        st.success(f"Loaded {len(events)} events")
 
-            if event == "goal":
-                if team_id == home_id:
-                    home_score += 1
-                else:
-                    away_score += 1
-
-                player = details.get("scoringPlayer", {})
-                name = f"{player.get('firstName','')} {player.get('lastName','')}"
-
-                is_en = details.get("emptyNet") is True or str(details.get("strength", "")).upper() == "EN"
-                en_flag = " 🥅" if is_en else ""
-
-                description = f"🚨 GOAL {team}{en_flag} | {name}"
-
-            elif event == "penalty":
-                description = f"⛔ PENALTY {team}"
-
-            # =========================
-            # DISPLAY
-            # =========================
-            st.write("")
-            st.write(time_str)
-            st.write(f"P{period} | {clock} remaining")
-            st.write(f"{away} {away_score} - {home_score} {home}")
-            st.write(description)
-            st.divider()
+    except Exception as e:
+        st.error(f"Failed to fetch data: {e}")
