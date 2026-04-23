@@ -7,13 +7,6 @@ from zoneinfo import ZoneInfo
 # FUNCTIONS
 # =========================
 
-def convert_to_et(raw_time):
-    if raw_time:
-        dt = datetime.fromisoformat(raw_time.replace("Z", "+00:00"))
-        return dt.astimezone(ZoneInfo("America/New_York")).strftime("%Y-%m-%d %H:%M:%S %Z")
-    return None
-
-
 def parse_actual_time(raw_time):
     if not raw_time:
         return None
@@ -120,11 +113,21 @@ run = st.button("Load Game Feed")
 # =========================
 
 if run:
-    url = f"https://statsapi.web.nhl.com/api/v1/game/{game_id}/feed/live"
+    url = f"https://api-web.nhle.com/v1/gamecenter/{game_id}/play-by-play"
 
     try:
-        data = requests.get(url, timeout=10).json()
-        plays = data.get("liveData", {}).get("plays", {}).get("allPlays", [])
+        response = requests.get(url, timeout=10)
+
+        if response.status_code != 200:
+            st.error(f"Bad response: {response.status_code}")
+            st.stop()
+
+        data = response.json()
+        plays = data.get("plays", [])
+
+        if not plays:
+            st.warning("No plays found. Check game ID.")
+            st.stop()
 
         START_SEC = None
         END_SEC = None
@@ -147,28 +150,31 @@ if run:
         events = []
 
         for play in plays:
-            about = play.get("about", {})
-            result = play.get("result", {})
-
-            raw_period = about.get("period")
+            raw_period = play.get("period")
             period_display = normalize_period(raw_period)
             period_group = group_period_for_filter(period_display)
 
-            clock = about.get("periodTime")
-            actual_dt = parse_actual_time(about.get("dateTime"))
+            clock = play.get("timeInPeriod")
+            actual_dt = parse_actual_time(play.get("timeUTC"))
 
+            # -------------------------
             # Period filter
+            # -------------------------
             if USE_PERIOD_FILTER and period_group not in TARGET_PERIODS:
                 continue
 
-            # Clock filter
+            # -------------------------
+            # Game clock filter
+            # -------------------------
             if USE_CLOCK_FILTER:
                 sec = clock_to_seconds(clock)
                 if sec is not None and START_SEC is not None and END_SEC is not None:
                     if not (START_SEC <= sec <= END_SEC):
                         continue
 
-            # Time filter
+            # -------------------------
+            # Actual time filter
+            # -------------------------
             if USE_TIME_FILTER and actual_dt and START_DT and END_DT:
                 if not (START_DT <= actual_dt <= END_DT):
                     continue
@@ -176,9 +182,9 @@ if run:
             events.append({
                 "Period": period_display,
                 "Clock": clock,
-                "Score": f"{about.get('goals', {}).get('away')} - {about.get('goals', {}).get('home')}",
-                "Description": result.get("description"),
-                "Event": result.get("eventTypeId"),
+                "Score": f"{play.get('awayScore')} - {play.get('homeScore')}",
+                "Description": play.get("description"),
+                "Event": play.get("typeDescKey"),
                 "ET Time": actual_dt.strftime("%Y-%m-%d %H:%M:%S %Z") if actual_dt else None
             })
 
