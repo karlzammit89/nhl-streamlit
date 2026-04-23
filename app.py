@@ -1,6 +1,6 @@
 import streamlit as st
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 st.title("🏒 NHL Live Dashboard (Official CDN API)")
 
@@ -8,8 +8,9 @@ BASE_URL = "https://api-web.nhle.com/v1"
 
 mode = st.radio("Mode", ["Schedule", "Game Feed"])
 
+
 # =========================
-# SAFE REQUEST WRAPPER
+# SAFE REQUEST
 # =========================
 def safe_get(url):
     try:
@@ -19,6 +20,21 @@ def safe_get(url):
     except Exception as e:
         st.error(f"API error: {e}")
         return None
+
+
+# =========================
+# TIME FORMATTER
+# =========================
+def format_timestamp(ts):
+    if not ts:
+        return "N/A"
+
+    try:
+        # NHL gives ISO timestamps like "2026-04-23T19:42:31Z"
+        dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        return dt.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    except:
+        return ts
 
 
 # =========================
@@ -57,7 +73,9 @@ if mode == "Schedule":
             st.warning("No games found")
         else:
             for g in games:
-                st.write(f"🏒 {g['id']} | {g['matchup']} | 🕒 {g['time']} | {g['status']}")
+                st.write(
+                    f"🏒 {g['id']} | {g['matchup']} | 🕒 {g['time']} | {g['status']}"
+                )
 
 
 # =========================
@@ -67,9 +85,7 @@ if mode == "Game Feed":
 
     game_id = st.text_input("Enter Game ID", "")
 
-    auto_refresh = st.checkbox("Auto-refresh (5s)", value=False)
-
-    if st.button("Load Game") or auto_refresh:
+    if st.button("Load Game Feed"):
 
         url = f"{BASE_URL}/gamecenter/{game_id}/play-by-play"
         data = safe_get(url)
@@ -91,6 +107,7 @@ if mode == "Game Feed":
 
             event = p.get("typeDescKey", "")
             desc = p.get("desc", "")
+
             period = p.get("periodDescriptor", {}).get("number")
 
             away_score = p.get("awayScore")
@@ -98,7 +115,10 @@ if mode == "Game Feed":
 
             score = f"{away_score} - {home_score}"
 
-            # simple emoji system
+            # ⏱️ REAL TIMESTAMP (when play happened)
+            timestamp = format_timestamp(p.get("timeUTC"))
+
+            # emoji mapping
             emoji = "🏒"
 
             if "goal" in event.lower():
@@ -107,6 +127,8 @@ if mode == "Game Feed":
                 emoji = "🎯"
             elif "penalty" in event.lower():
                 emoji = "🚨"
+            elif "hit" in event.lower():
+                emoji = "💥"
 
             st.subheader(f"{emoji} {event}")
 
@@ -115,13 +137,11 @@ if mode == "Game Feed":
             else:
                 st.write(f"🏟️ Period {period} | 📊 {score}")
 
+            st.write(f"🕒 Event Time: {timestamp}")
             st.write(f"📌 {desc}")
+
             st.divider()
 
             prev_score = score
 
         st.success(f"Loaded {len(plays)} plays")
-
-        # simple auto refresh loop (Streamlit-safe hack)
-        if auto_refresh:
-            st.rerun()
