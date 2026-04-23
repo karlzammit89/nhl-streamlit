@@ -82,7 +82,7 @@ if mode == "Schedule":
 
             for game in games:
                 st.write(
-                    f"{game['gamePk']} | 🏒 {game['matchup']} | 🕒 {game['time']} (ET)}"
+                    f"🏒 {game['matchup']} | 🕒 {game['time']} (ET)"
                 )
 
         else:
