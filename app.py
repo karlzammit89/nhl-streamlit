@@ -1,6 +1,6 @@
 import streamlit as st
 import requests
-from datetime import datetime, timezone
+from datetime import datetime
 
 st.title("🏒 NHL Dashboard (Official CDN API)")
 
@@ -40,10 +40,20 @@ def get_event_time(play):
 
 
 # =========================
-# REAL-WORLD INGEST TIME
+# REAL EVENT TIMESTAMP
 # =========================
-def get_ingest_time():
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+def get_event_timestamp(play):
+    ts = play.get("timeUTC")
+
+    if ts:
+        try:
+            return datetime.fromisoformat(ts.replace("Z", "+00:00")).strftime(
+                "%Y-%m-%d %H:%M:%S UTC"
+            )
+        except Exception:
+            return ts
+
+    return "Timestamp: N/A"
 
 
 # =========================
@@ -124,11 +134,11 @@ if mode == "Game Feed":
 
             score = f"{away_score} - {home_score}"
 
-            # 🧠 hockey game clock time
+            # 🧠 hockey clock time
             event_time = get_event_time(p)
 
-            # 🕒 real ingestion timestamp (your system time)
-            ingest_time = get_ingest_time()
+            # 🕒 real event timestamp (NEW FIX)
+            event_timestamp = get_event_timestamp(p)
 
             # emoji mapping
             emoji = "🏒"
@@ -153,7 +163,7 @@ if mode == "Game Feed":
 
             # OUTPUT TIMES
             st.write(event_time)
-            st.write(f"🕒 Received by app: {ingest_time}")
+            st.write(f"🕒 Event occurred: {event_timestamp}")
             st.write(f"📌 {desc}")
 
             st.divider()
