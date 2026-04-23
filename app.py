@@ -10,12 +10,9 @@ from zoneinfo import ZoneInfo
 def parse_actual_time(raw_time):
     if not raw_time:
         return None
-    try:
-        return datetime.fromisoformat(raw_time.replace("Z", "+00:00")).astimezone(
-            ZoneInfo("America/New_York")
-        )
-    except:
-        return None
+    return datetime.fromisoformat(raw_time.replace("Z", "+00:00")).astimezone(
+        ZoneInfo("America/New_York")
+    )
 
 
 def clock_to_seconds(clock):
@@ -108,19 +105,6 @@ if USE_TIME_FILTER:
         key="end_time"
     )
 
-# -------------------------
-# Event Type Filter (NEW)
-# -------------------------
-USE_EVENT_FILTER = st.checkbox("Filter Important Events Only", value=False)
-
-IMPORTANT_EVENTS = [
-    "goal",
-    "shot-on-goal",
-    "missed-shot",
-    "blocked-shot",
-    "penalty"
-]
-
 run = st.button("Load Game Feed")
 
 
@@ -166,78 +150,42 @@ if run:
         events = []
 
         for play in plays:
-
-            # -------------------------
-            # BASIC FIELDS
-            # -------------------------
             raw_period = play.get("period")
             period_display = normalize_period(raw_period)
             period_group = group_period_for_filter(period_display)
 
             clock = play.get("timeInPeriod")
-
-            # -------------------------
-            # TIME (SAFE)
-            # -------------------------
             actual_dt = parse_actual_time(play.get("timeUTC"))
 
             # -------------------------
-            # DESCRIPTION (ROBUST)
+            # Period filter
             # -------------------------
-            description = play.get("description")
-
-            if not description:
-                details = play.get("details", {})
-                description = (
-                    details.get("descKey")
-                    or details.get("reason")
-                    or "No description"
-                )
-
-            # -------------------------
-            # SCORE (ROBUST)
-            # -------------------------
-            away_score = play.get("awayScore")
-            home_score = play.get("homeScore")
-
-            if away_score is None or home_score is None:
-                away_score = data.get("awayTeam", {}).get("score", 0)
-                home_score = data.get("homeTeam", {}).get("score", 0)
-
-            # -------------------------
-            # EVENT TYPE
-            # -------------------------
-            event_type = play.get("typeDescKey")
-
-            # -------------------------
-            # FILTERS
-            # -------------------------
-            if USE_EVENT_FILTER and event_type not in IMPORTANT_EVENTS:
-                continue
-
             if USE_PERIOD_FILTER and period_group not in TARGET_PERIODS:
                 continue
 
+            # -------------------------
+            # Game clock filter
+            # -------------------------
             if USE_CLOCK_FILTER:
                 sec = clock_to_seconds(clock)
                 if sec is not None and START_SEC is not None and END_SEC is not None:
                     if not (START_SEC <= sec <= END_SEC):
                         continue
 
+            # -------------------------
+            # Actual time filter
+            # -------------------------
             if USE_TIME_FILTER and actual_dt and START_DT and END_DT:
                 if not (START_DT <= actual_dt <= END_DT):
                     continue
 
-            # -------------------------
-            # STORE EVENT
-            # -------------------------
             events.append({
                 "Period": period_display,
                 "Clock": clock,
-                "Score": f"{away_score} - {home_score}",
-                "Description": description,
-                "Event": event_type,
-                "ET Time": actual_dt.strftime("%Y-%m-%d %H:%M:%S %Z") if actual_dt else "N/A"
+                "Score": f"{play.get('awayScore')} - {play.get('homeScore')}",
+                "Description": play.get("description"),
+                "Event": play.get("typeDescKey"),
+                "ET Time": actual_dt.strftime("%Y-%m-%d %H:%M:%S %Z") if actual_dt else None
             })
 
         # =========================
