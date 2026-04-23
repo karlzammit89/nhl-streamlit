@@ -1,5 +1,6 @@
 import streamlit as st
 import requests
+from datetime import datetime, timezone
 
 st.title("🏒 NHL Dashboard (Official CDN API)")
 
@@ -9,7 +10,7 @@ mode = st.radio("Mode", ["Schedule", "Game Feed"])
 
 
 # =========================
-# SAFE API CALL
+# SAFE REQUEST
 # =========================
 def safe_get(url):
     try:
@@ -22,7 +23,7 @@ def safe_get(url):
 
 
 # =========================
-# EVENT TIME LOGIC (BEST AVAILABLE)
+# GAME TIME (HOCKEY CLOCK)
 # =========================
 def get_event_time(play):
     time_in_period = play.get("timeInPeriod")
@@ -36,6 +37,13 @@ def get_event_time(play):
         return f"📊 Period {period} | Seq {sort_order}"
 
     return "⏱️ Time: N/A"
+
+
+# =========================
+# REAL-WORLD INGEST TIME
+# =========================
+def get_ingest_time():
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
 
 # =========================
@@ -116,6 +124,12 @@ if mode == "Game Feed":
 
             score = f"{away_score} - {home_score}"
 
+            # 🧠 hockey game clock time
+            event_time = get_event_time(p)
+
+            # 🕒 real ingestion timestamp (your system time)
+            ingest_time = get_ingest_time()
+
             # emoji mapping
             emoji = "🏒"
 
@@ -130,9 +144,6 @@ if mode == "Game Feed":
             elif "missed shot" in event.lower():
                 emoji = "😬"
 
-            # event time (reliable fallback system)
-            event_time = get_event_time(p)
-
             st.subheader(f"{emoji} {event}")
 
             if score != prev_score and prev_score is not None:
@@ -140,7 +151,9 @@ if mode == "Game Feed":
             else:
                 st.write(f"🏟️ Period {period} | 📊 {score}")
 
+            # OUTPUT TIMES
             st.write(event_time)
+            st.write(f"🕒 Received by app: {ingest_time}")
             st.write(f"📌 {desc}")
 
             st.divider()
