@@ -69,7 +69,7 @@ if mode == "Schedule":
 
 
 # =========================================================
-# MODE 2 — GAME FEED (YOUR PLAY-BY-PLAY LOGIC)
+# MODE 2 — GAME FEED
 # =========================================================
 if mode == "Game Feed":
 
@@ -92,37 +92,50 @@ if mode == "Game Feed":
         data = fetch_json(url)
         plays = data.get("plays", [])
 
+        # =========================
+        # CLOCK NORMALIZATION
+        # =========================
         def normalize_clock(clock):
             try:
                 mm, ss = map(int, clock.split(":"))
                 total = mm * 60 + ss
                 total = max(0, min(1200, total))
-                mm = total // 60
-                ss = total % 60
-                return f"{mm:02d}:{ss:02d}"
+                return f"{total//60:02d}:{total%60:02d}"
             except:
                 return "20:00"
 
+        # =========================
+        # SORT (EARLY → LATE)
+        # =========================
         def sort_key(play):
             period = play.get("periodDescriptor", {}).get("number", 0)
             clock = normalize_clock(play.get("timeInPeriod", "20:00"))
+
             mm, ss = map(int, clock.split(":"))
             remaining = mm * 60 + ss
+
             return (period - 1) * 1200 + (1200 - remaining)
 
         plays = sorted(plays, key=sort_key)
 
+        # =========================
+        # GAME START TIME
+        # =========================
         start_time_utc = data.get("startTimeUTC")
         game_start = datetime.fromisoformat(start_time_utc.replace("Z", "+00:00"))
 
         def build_event_time(period, clock):
             mm, ss = map(int, clock.split(":"))
             remaining = mm * 60 + ss
+
             elapsed = (1200 - remaining) + (period - 1) * 1200
             return (game_start + timedelta(seconds=elapsed)).astimezone(
                 ZoneInfo("America/New_York")
             )
 
+        # =========================
+        # TEAM INFO
+        # =========================
         home = data.get("homeTeam", {}).get("abbrev", "HOME")
         away = data.get("awayTeam", {}).get("abbrev", "AWAY")
 
@@ -173,9 +186,16 @@ if mode == "Game Feed":
             elif event == "penalty":
                 description = f"⛔ PENALTY {team}"
 
+            # =========================
+            # FINAL DISPLAY (FIXED)
+            # =========================
             st.write("")
             st.write(time_str)
-            st.write(f"P{period} | {clock}")
+
+            # ✅ KEEP NHL CLOCK (COUNTDOWN) — CLEAR LABEL
+            st.write(f"P{period} | {clock} remaining")
+
             st.write(f"{away} {away_score} - {home_score} {home}")
             st.write(description)
+
             st.divider()
