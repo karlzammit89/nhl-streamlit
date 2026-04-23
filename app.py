@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 st.title("🏒 NHL Dashboard")
 
 # =========================
-# MODE (MLB STYLE)
+# MODE
 # =========================
 mode = st.radio("Select Mode", ["Schedule"])
 
@@ -27,7 +27,7 @@ def convert_to_et(raw_time):
 
 
 # =========================
-# MODE 1 — SCHEDULE
+# MODE — SCHEDULE
 # =========================
 if mode == "Schedule":
 
@@ -35,55 +35,47 @@ if mode == "Schedule":
 
     if st.button("Load Games"):
 
-        # ✅ target ET date
         target_date_et = datetime.fromisoformat(date).date()
 
         url = f"https://api-web.nhle.com/v1/schedule/{date}"
 
         try:
             data = requests.get(url, timeout=10).json()
-        except Exception as e:
-            st.error(f"API error: {e}")
+        except:
             st.stop()
 
         games = []
 
         # =========================
-        # PARSE ALL GAMES
+        # PARSE GAMES
         # =========================
         for week in data.get("gameWeek", []):
             for g in week.get("games", []):
 
-                start_utc = g.get("startTimeUTC")
-                if not start_utc:
+                start = g.get("startTimeUTC")
+                if not start:
                     continue
 
-                # ✅ STEP 1: UTC → ET
-                dt_et = datetime.fromisoformat(start_utc.replace("Z", "+00:00")) \
+                # UTC → ET
+                dt_et = datetime.fromisoformat(start.replace("Z", "+00:00")) \
                     .astimezone(ZoneInfo("America/New_York"))
 
-                # ✅ STEP 2: STRICT ET DATE FILTER (THIS FIXES YOUR ISSUE)
+                # STRICT ET DATE FILTER
                 if dt_et.date() != target_date_et:
                     continue
 
                 games.append({
                     "gamePk": g.get("id"),
                     "matchup": f"{g['awayTeam']['abbrev']} @ {g['homeTeam']['abbrev']}",
-                    "time": dt_et.strftime("%H:%M"),
-                    "state": g.get("gameState")
+                    "time": dt_et.strftime("%H:%M")
                 })
 
         # =========================
-        # OUTPUT (MLB STYLE)
+        # OUTPUT (CLEAN)
         # =========================
         if games:
-
-            st.success(f"Found {len(games)} games on {date} (ET)")
 
             for game in games:
                 st.write(
                     f"{game['gamePk']} | 🏒 {game['matchup']} | 🕒 {game['time']} (ET)"
                 )
-
-        else:
-            st.warning("No games found for this exact ET date")
