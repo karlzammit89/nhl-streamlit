@@ -1,8 +1,7 @@
 import streamlit as st
 import requests
-from datetime import datetime, timezone
 
-st.title("🏒 NHL Live Dashboard (Official CDN API)")
+st.title("🏒 NHL Dashboard (Official CDN API)")
 
 BASE_URL = "https://api-web.nhle.com/v1"
 
@@ -10,7 +9,7 @@ mode = st.radio("Mode", ["Schedule", "Game Feed"])
 
 
 # =========================
-# SAFE REQUEST
+# SAFE API CALL
 # =========================
 def safe_get(url):
     try:
@@ -23,18 +22,20 @@ def safe_get(url):
 
 
 # =========================
-# TIME FORMATTER
+# EVENT TIME LOGIC (BEST AVAILABLE)
 # =========================
-def format_timestamp(ts):
-    if not ts:
-        return "N/A"
+def get_event_time(play):
+    time_in_period = play.get("timeInPeriod")
+    period = play.get("periodDescriptor", {}).get("number")
+    sort_order = play.get("sortOrder")
 
-    try:
-        # NHL gives ISO timestamps like "2026-04-23T19:42:31Z"
-        dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
-        return dt.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-    except:
-        return ts
+    if time_in_period:
+        return f"⏱️ Period Time: {time_in_period}"
+
+    if period and sort_order:
+        return f"📊 Period {period} | Seq {sort_order}"
+
+    return "⏱️ Time: N/A"
 
 
 # =========================
@@ -115,9 +116,6 @@ if mode == "Game Feed":
 
             score = f"{away_score} - {home_score}"
 
-            # ⏱️ REAL TIMESTAMP (when play happened)
-            timestamp = format_timestamp(p.get("timeUTC"))
-
             # emoji mapping
             emoji = "🏒"
 
@@ -129,6 +127,11 @@ if mode == "Game Feed":
                 emoji = "🚨"
             elif "hit" in event.lower():
                 emoji = "💥"
+            elif "missed shot" in event.lower():
+                emoji = "😬"
+
+            # event time (reliable fallback system)
+            event_time = get_event_time(p)
 
             st.subheader(f"{emoji} {event}")
 
@@ -137,7 +140,7 @@ if mode == "Game Feed":
             else:
                 st.write(f"🏟️ Period {period} | 📊 {score}")
 
-            st.write(f"🕒 Event Time: {timestamp}")
+            st.write(event_time)
             st.write(f"📌 {desc}")
 
             st.divider()
