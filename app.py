@@ -1,58 +1,87 @@
+import streamlit as st
 import requests
 from datetime import datetime
 from zoneinfo import ZoneInfo
-import streamlit as st
 
-st.set_page_config(page_title="NHL Games Viewer", page_icon="🏒")
-st.title("🏒 NHL Games (Correct ET Filtering)")
+# =========================
+# TITLE
+# =========================
+st.title("🏒 NHL Dashboard")
 
-col1, col2, col3 = st.columns(3)
+# =========================
+# MODE (same as MLB style)
+# =========================
+mode = st.radio("Select Mode", ["Schedule"])
 
-with col1:
-    year = st.number_input("Year", 2020, 2030, 2026)
-with col2:
-    month = st.number_input("Month", 1, 12, 4)
-with col3:
-    day = st.number_input("Day", 1, 31, 20)
+# =========================
+# HELPERS
+# =========================
+def convert_to_et(raw_time):
+    if raw_time:
+        try:
+            dt = datetime.fromisoformat(raw_time.replace("Z", "+00:00"))
+            return dt.astimezone(ZoneInfo("America/New_York"))
+        except:
+            return None
+    return None
 
-if st.button("Get Games"):
 
-    target_date_et = datetime(year, month, day).date()
+def convert_to_et_str(raw_time):
+    dt = convert_to_et(raw_time)
+    if dt:
+        return dt.strftime("%Y-%m-%d %H:%M:%S %Z")
+    return None
 
-    url = f"https://api-web.nhle.com/v1/schedule/{year}-{month:02d}-{day:02d}"
 
-    try:
-        data = requests.get(url, timeout=10).json()
-    except Exception as e:
-        st.error(f"API error: {e}")
-        st.stop()
+# =========================
+# MODE 1 — SCHEDULE (MLB STYLE)
+# =========================
+if mode == "Schedule":
 
-    games = []
+    date = st.text_input("Enter date (YYYY-MM-DD)", "2026-04-20")
 
-    for week in data.get("gameWeek", []):
-        for game in week.get("games", []):
+    if st.button("Load Games"):
 
-            utc_time = game.get("startTimeUTC")
-            if not utc_time:
-                continue
+        url = f"https://api-web.nhle.com/v1/schedule/{date}"
+        data = requests.get(url).json()
 
-            # ✅ PROPER UTC → ET CONVERSION (handles DST correctly)
-            dt_utc = datetime.fromisoformat(utc_time.replace("Z", "+00:00"))
-            dt_et = dt_utc.astimezone(ZoneInfo("America/New_York"))
+        games = []
 
-            # filter by REAL ET date
-            if dt_et.date() != target_date_et:
-                continue
+        # =========================
+        # PARSE GAMES (FULL DAY SEARCH)
+        # =========================
+        for week in data.get("gameWeek", []):
+            for g in week.get("games", []):
 
-            games.append({
-                "Game": f"{game['awayTeam']['abbrev']} @ {game['homeTeam']['abbrev']}",
-                "Time (ET)": dt_et.strftime("%H:%M"),
-                "Status": game.get("gameState")
-            })
+                game_pk = g.get("id")
 
-    st.subheader(f"Games on {target_date_et} (ET)")
+                away = g.get("awayTeam", {}).get("abbrev")
+                home = g.get("homeTeam", {}).get("abbrev")
 
-    if games:
-        st.dataframe(games, use_container_width=True)
-    else:
-        st.warning("No games found for this date.")
+                start = g.get("startTimeUTC")
+                state = g.get("gameState")
+
+                et_time = convert_to_et_str(start)
+
+                if et_time:
+                    games.append({
+                        "gamePk": game_pk,
+                        "matchup": f"{away} @ {home}",
+                        "time": et_time,
+                        "state": state
+                    })
+
+        # =========================
+        # OUTPUT (MLB STYLE)
+        # =========================
+        if games:
+
+            for game in games:
+                time_only = game["time"].split(" ")[1][:5] if game["time"] else "N/A"
+
+                st.write(
+                    f"{game['gamePk']} | 🏒 {game['matchup']} | 🕒 {time_only} (ET) | {game['state']}"
+                )
+
+        else:
+            st.warning("No games found for this date")
