@@ -8,14 +8,19 @@ from zoneinfo import ZoneInfo
 # =========================
 
 def parse_actual_time(raw_time):
+    """Safely parse NHL UTC timestamps"""
     if not raw_time:
         return None
-    return datetime.fromisoformat(raw_time.replace("Z", "+00:00")).astimezone(
-        ZoneInfo("America/New_York")
-    )
+    try:
+        return datetime.fromisoformat(
+            raw_time.replace("Z", "+00:00")
+        ).astimezone(ZoneInfo("America/New_York"))
+    except:
+        return None
 
 
 def clock_to_seconds(clock):
+    """Convert MM:SS → seconds"""
     if not clock:
         return None
     try:
@@ -26,6 +31,7 @@ def clock_to_seconds(clock):
 
 
 def normalize_period(period):
+    """Convert OT periods into readable format"""
     if period is None:
         return None
     if period >= 4:
@@ -34,9 +40,22 @@ def normalize_period(period):
 
 
 def group_period_for_filter(period):
+    """Normalize OT grouping for filtering"""
     if isinstance(period, str) and period.startswith("OT"):
         return "OT"
     return period
+
+
+def get_raw_timestamp(play):
+    """
+    NHL API does NOT guarantee timeUTC exists.
+    Try multiple possible fields.
+    """
+    return (
+        play.get("timeUTC")
+        or play.get("eventTime")
+        or play.get("about", {}).get("eventTime")
+    )
 
 
 # =========================
@@ -45,7 +64,9 @@ def group_period_for_filter(period):
 
 st.title("🏒 NHL Dashboard")
 
-game_id = st.text_input("Enter Game ID (gamePk)", "2023020001")
+game_id = st.text_input("Enter Game ID (gamePk)", "2024020123")
+
+DEBUG = st.checkbox("Debug raw API", value=False)
 
 # -------------------------
 # Period Filter
@@ -70,8 +91,8 @@ MIN_CLOCK = None
 MAX_CLOCK = None
 
 if USE_CLOCK_FILTER:
-    MIN_CLOCK = st.text_input("Min Clock (MM:SS)", "10:00")
-    MAX_CLOCK = st.text_input("Max Clock (MM:SS)", "00:00")
+    MIN_CLOCK = st.text_input("Min Clock (MM:SS)", "00:00")
+    MAX_CLOCK = st.text_input("Max Clock (MM:SS)", "20:00")
 
 # -------------------------
 # Actual Time Filter
@@ -83,26 +104,18 @@ et_now = datetime.now(ZoneInfo("America/New_York"))
 today_start = et_now.replace(hour=0, minute=0, second=0, microsecond=0)
 today_end = et_now.replace(hour=23, minute=59, second=0, microsecond=0)
 
-if "start_time" not in st.session_state:
-    st.session_state.start_time = today_start.strftime("%Y-%m-%d %H:%M")
-
-if "end_time" not in st.session_state:
-    st.session_state.end_time = today_end.strftime("%Y-%m-%d %H:%M")
-
 START_TIME = None
 END_TIME = None
 
 if USE_TIME_FILTER:
     START_TIME = st.text_input(
         "Start Time (YYYY-MM-DD HH:MM)",
-        value=st.session_state.start_time,
-        key="start_time"
+        value=today_start.strftime("%Y-%m-%d %H:%M"),
     )
 
     END_TIME = st.text_input(
         "End Time (YYYY-MM-DD HH:MM)",
-        value=st.session_state.end_time,
-        key="end_time"
+        value=today_end.strftime("%Y-%m-%d %H:%M"),
     )
 
 run = st.button("Load Game Feed")
@@ -125,16 +138,24 @@ if run:
         data = response.json()
         plays = data.get("plays", [])
 
+        if DEBUG:
+            st.write("RAW API SAMPLE")
+            st.json(plays[:2])
+
         if not plays:
-            st.warning("No plays found. Check game ID.")
+            st.warning("No plays found.")
             st.stop()
+
+        # -------------------------
+        # Filters setup
+        # -------------------------
 
         START_SEC = None
         END_SEC = None
 
         if USE_CLOCK_FILTER and MIN_CLOCK and MAX_CLOCK:
-            START_SEC = clock_to_seconds(MAX_CLOCK)
-            END_SEC = clock_to_seconds(MIN_CLOCK)
+            START_SEC = clock_to_seconds(MIN_CLOCK)
+            END_SEC = clock_to_seconds(MAX_CLOCK)
 
         START_DT = None
         END_DT = None
@@ -147,15 +168,23 @@ if run:
                 tzinfo=ZoneInfo("America/New_York")
             )
 
+        # 🔥 IMPORTANT: sort by NHL's true timeline order
+        plays = sorted(plays, key=lambda x: x.get("sortOrder", 0))
+
         events = []
 
+        # =========================
+        # PROCESS PLAYS
+        # =========================
         for play in plays:
+
             raw_period = play.get("period")
             period_display = normalize_period(raw_period)
             period_group = group_period_for_filter(period_display)
 
             clock = play.get("timeInPeriod")
-            actual_dt = parse_actual_time(play.get("timeUTC"))
+            raw_time = get_raw_timestamp(play)
+            actual_dt = parse_actual_time(raw_time)
 
             # -------------------------
             # Period filter
@@ -164,7 +193,7 @@ if run:
                 continue
 
             # -------------------------
-            # Game clock filter
+            # Clock filter
             # -------------------------
             if USE_CLOCK_FILTER:
                 sec = clock_to_seconds(clock)
@@ -173,7 +202,7 @@ if run:
                         continue
 
             # -------------------------
-            # Actual time filter
+            # Time filter
             # -------------------------
             if USE_TIME_FILTER and actual_dt and START_DT and END_DT:
                 if not (START_DT <= actual_dt <= END_DT):
@@ -185,16 +214,26 @@ if run:
                 "Score": f"{play.get('awayScore')} - {play.get('homeScore')}",
                 "Description": play.get("description"),
                 "Event": play.get("typeDescKey"),
-                "ET Time": actual_dt.strftime("%Y-%m-%d %H:%M:%S %Z") if actual_dt else None
+                "ET Time": (
+                    actual_dt.strftime("%Y-%m-%d %H:%M:%S %Z")
+                    if actual_dt else "Not available"
+                ),
+                "SortOrder": play.get("sortOrder")
             })
 
         # =========================
         # OUTPUT
         # =========================
 
+        st.success(f"Loaded {len(events)} events")
+
         for e in events:
 
-            label = f"🔥 {e['Period']}" if str(e["Period"]).startswith("OT") else f"🏒 P{e['Period']}"
+            label = (
+                f"🔥 {e['Period']}"
+                if isinstance(e["Period"], str) and e["Period"].startswith("OT")
+                else f"🏒 P{e['Period']}"
+            )
 
             st.write(f"**{label} | ⏱️ {e['Clock']}**")
             st.write(f"📊 Score: {e['Score']}")
@@ -203,10 +242,9 @@ if run:
             if e["Event"]:
                 st.write(f"🎯 Event: {e['Event']}")
 
-            st.success(f"🕒 Timestamp: {e['ET Time']}")
+            st.write(f"🕒 ET Time: {e['ET Time']}")
+            st.caption(f"SortOrder: {e['SortOrder']}")
             st.markdown("---")
-
-        st.success(f"Loaded {len(events)} events")
 
     except Exception as e:
         st.error(f"Failed to fetch data: {e}")
